@@ -180,6 +180,14 @@ public class ODSToAccess {
         return mapSingleLine;
     }
 
+    /**
+     * Reads each single cell of the given ODS file
+     * 
+     * @param reader
+     * @param mapSingleLine
+     * @return Text contained into the cell
+     * @throws XMLStreamException
+     */
     private boolean readInnerCell(XMLStreamReader reader, Map<Integer, String> mapSingleLine)
             throws XMLStreamException {
         int next1 = reader.nextTag();
