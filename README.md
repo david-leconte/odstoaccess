@@ -11,3 +11,8 @@ Arguments :
 
 ```sh
     java -jar odstoaccess c:/pathto/thesheet.ods c:/pathto/thedatabase.accdb tablename
+```
+
+**IMPORTANT**
+
+Doesn\'t handle ODS formulas yet !

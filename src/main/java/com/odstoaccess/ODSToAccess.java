@@ -43,10 +43,9 @@ public class ODSToAccess {
     private Connection connection;
 
     private int linesRead;
-    private int columnsRead;
+    private Map<Integer, Integer> columnsReadPerLine;
     private int linesInserted;
     private Map<Integer, String> header;
-    // private Map<Integer, HashMap<Integer, String>> allLines;
 
     /**
      * Class constructor, sets and checks given files and tries to connect to MS
@@ -80,6 +79,7 @@ public class ODSToAccess {
         this.connection = DriverManager.getConnection("jdbc:ucanaccess://" + this.DBPath.toAbsolutePath());
 
         this.linesRead = 0;
+        this.columnsReadPerLine = new HashMap<Integer, Integer>();
         this.linesInserted = 0;
     }
 
@@ -115,26 +115,20 @@ public class ODSToAccess {
 
             while (this.reader.hasNext()) {
                 if (this.reader.next() == START && this.reader.getLocalName() == "table-row") {
-                    this.linesRead++;
 
-                    if (this.linesRead == 1) {
+                    if (this.linesRead == 0) {
                         this.header = this.readLine(this.reader);
-
+                        this.linesRead++;
                         this.query = this.getQuery();
                     }
 
-                    else
-                        this.insertLineIntoDB(this.readLine(this.reader));
-
-                    // allLines.put(this.linesRead, (HashMap<Integer, String>) readLine(reader));
-                    // System.out.println();
+                    else {
+                        Map<Integer, String> line = this.readLine(this.reader);
+                        this.linesRead++;
+                        this.insertLineIntoDB(line);
+                    }
                 }
             }
-
-            /*
-             * for(HashMap.Entry<Integer, HashMap<Integer, String>> entry :
-             * allLines.entrySet()) { System.out.println(entry.getKey()); }
-             */
         } catch (Exception e) {
             System.out.println("Couldn't read through the lines of the table : " + e.getMessage());
         }
@@ -149,32 +143,30 @@ public class ODSToAccess {
      */
     private Map<Integer, String> readLine(XMLStreamReader reader) throws XMLStreamException {
         Map<Integer, String> mapSingleLine = new HashMap<Integer, String>();
-        this.columnsRead = 0;
+        int lineNumber = this.linesRead;
+
+        this.columnsReadPerLine.put(lineNumber, 0);
 
         while (reader.hasNext()) {
 
-            int next0 = reader.next();
+            int element = reader.next();
 
-            if (next0 == START && reader.getLocalName() == "table-cell") {
+            if (element == START && reader.getLocalName() == "table-cell") {
 
-                boolean readCell = readInnerCell(reader, mapSingleLine);
-
-                // System.out.println(readCell);
+                boolean readCell = readInnerCell(reader, mapSingleLine, lineNumber, false);
 
                 if (!readCell)
                     break;
             }
 
-            else if (next0 == END && reader.getLocalName() == "table-row")
+            else if (element == END && reader.getLocalName() == "table-row")
                 break;
 
             /*
              * for(HashMap.Entry<Integer, String> entry : mapSingleLine.entrySet()) {
              * System.out.println(entry.getKey() + " : " + entry.getValue() + " (" +
-             * this.linesRead + ")"); }
+             * this.linesRead + ")"); } System.out.println();
              */
-
-            // System.out.println();
         }
 
         return mapSingleLine;
@@ -185,50 +177,72 @@ public class ODSToAccess {
      * 
      * @param reader
      * @param mapSingleLine
-     * @return Text contained into the cell
+     * @param lineNumber
+     * @param recursion
+     * @return True if a value was inserted in the line map, false if it is the end
+     *         of the line
      * @throws XMLStreamException
      */
-    private boolean readInnerCell(XMLStreamReader reader, Map<Integer, String> mapSingleLine)
-            throws XMLStreamException {
-        int next1 = reader.nextTag();
+    private boolean readInnerCell(XMLStreamReader reader, Map<Integer, String> mapSingleLine, int lineNumber,
+            boolean recursion) throws XMLStreamException {
+        /*
+         * If the element is empty, how many columns does the XML element count for ?
+         * (number-columns-repeated attribute) Default is 1
+         */
+        int emptyColumnsRead = 1;
 
-        // System.out.println(reader.getLocalName());
+        if (reader.getEventType() == START && reader.getAttributeValue(null, "number-columns-repeated") != null) {
+            emptyColumnsRead = Integer.parseInt(reader.getAttributeValue(null, "number-columns-repeated"));
+        }
 
-        // p equals text element here
-        if (next1 == START && reader.getLocalName() == "p") {
-            this.columnsRead++;
+        while (this.reader.hasNext()) {
 
-            String tableCellText = "";
+            int next1 = reader.next();
 
-            while (reader.hasNext()) {
-                int next2 = reader.next();
+            // System.out.println("[" + lineNumber + "] {" +
+            // this.columnsReadPerLine.get(lineNumber) + "}");
 
-                if (next2 == END)
-                    break;
+            // p equals text element here
+            if (next1 == START && reader.getLocalName() == "p") {
+                String tableCellText = "";
 
-                else if (next2 == CHARS)
-                    tableCellText += reader.getText();
+                while (reader.hasNext()) {
+                    int next2 = reader.next();
 
-                else if (next2 == START)
-                    tableCellText += recursiveElementRead(reader);
+                    if (next2 == END)
+                        break;
+
+                    else if (next2 == CHARS)
+                        tableCellText += reader.getText();
+
+                    else if (next2 == START)
+                        tableCellText += recursiveElementRead(reader);
+                }
+
+                this.columnsReadPerLine.put(lineNumber, this.columnsReadPerLine.get(lineNumber) + 1);
+                mapSingleLine.put(this.columnsReadPerLine.get(lineNumber), tableCellText);
+
+                // System.out.println("[" + lineNumber + "] {" +
+                // this.columnsReadPerLine.get(lineNumber) + "} " + tableCellText);
+
+                return true;
             }
 
-            mapSingleLine.put(this.columnsRead, tableCellText);
+            else if (next1 == START && reader.getLocalName() == "table-cell") {
+                this.columnsReadPerLine.put(lineNumber, this.columnsReadPerLine.get(lineNumber) + emptyColumnsRead);
 
-            return true;
+                // System.out.println("[" + lineNumber + "] {" +
+                // this.columnsReadPerLine.get(lineNumber) + "} EMPTY ADDED " +
+                // emptyColumnsRead);
 
-        }
+                return readInnerCell(reader, mapSingleLine, lineNumber, true);
+            }
 
-        else if (reader.getLocalName() == "table-cell") {
-            // System.out.println("recursion");
-            this.columnsRead++;
-
-            return readInnerCell(reader, mapSingleLine);
-        }
-
-        else if (next1 == END && reader.getLocalName() == "table-row") {
-            // System.out.println("end of row");
-            return false;
+            else if (next1 == END && reader.getLocalName() == "table-row") {
+                // System.out.println("end of row");
+                this.columnsReadPerLine.put(lineNumber, this.columnsReadPerLine.get(lineNumber) + emptyColumnsRead);
+                return false;
+            }
         }
 
         return false;
@@ -296,7 +310,7 @@ public class ODSToAccess {
 
         this.query += ");";
 
-        System.out.println(this.query);
+        // System.out.println(this.query);
 
         return this.query;
     }
@@ -316,9 +330,10 @@ public class ODSToAccess {
                 String field = line.get(i);
 
                 if (field == null)
-                    field = "";
+                    preparedStatement.setNull(i, java.sql.Types.VARCHAR);
 
-                preparedStatement.setString(i, field);
+                else
+                    preparedStatement.setString(i, field);
             }
 
             if (preparedStatement.executeUpdate() > 0) {
